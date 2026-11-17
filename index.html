@@ -520,13 +520,25 @@ function randomTags(ids, n, salt, seen, prev) {
       const cand = `${id}|${salt}:${i}:${t}`, k = G.keyOf(G.make(cand)); if (seen.has(k)) continue;
       seen.add(k); tag = cand; prev = id;
     }
+    // くじで当たらなかったら、種類を順に見て、まだ出ていない問題で埋める（使っていない問題が残っているのに欠けない。shared-workflows#409）
+    for (let t = 0; t < ids.length * 40 && !tag; t++) {
+      const id = ids[t % ids.length]; if (ids.length > 1 && id === prev) continue;
+      const cand = `${id}|${salt}:${i}:f${t}`, k = G.keyOf(G.make(cand)); if (seen.has(k)) continue;
+      seen.add(k); tag = cand; prev = id;
+    }
     if (tag) out.push(tag);
   }
   return out;
 }
 function endlessList() { const s = rid(), seen = new Set(), out = []; let prev = null; for (const [lvs, n] of ERAMP) { const t = randomTags(idsOf(lvs), n, s + ":" + lvs.join(""), seen, prev); out.push(...t); prev = t.length ? t[t.length - 1].split("|")[0] : prev; } return out; }
 let moreHook = null; // QA で「足せる問題が無い」を試すときだけ差し替える
-function moreList(list) { const seen = new Set(list.map((t) => G.keyOf(G.make(t)))), prev = list.length ? list[list.length - 1].split("|")[0] : null; return randomTags(idsOf([0, 1, 2]), 40, rid(), seen, prev); }
+function moreList(list) {
+  const seen = new Set(list.map((t) => G.keyOf(G.make(t)))), prev = list.length ? list[list.length - 1].split("|")[0] : null, out = randomTags(idsOf([0, 1, 2]), 40, rid(), seen, prev);
+  if (out.length >= 40) return out;
+  // 全部の問題を使い切ったら、次の周に入る：近ごろ出した30問だけを避けて足す（とことんは自分で降りるまで終わらない。shared-workflows#409）
+  const all = list.concat(out), recent = new Set(all.slice(-30).map((t) => G.keyOf(G.make(t)))), last = all.length ? all[all.length - 1].split("|")[0] : null;
+  return out.concat(randomTags(idsOf([0, 1, 2]), 40 - out.length, rid(), recent, last));
+}
 const starsOf = (m) => (m === 0 ? 3 : m === 1 ? 2 : 1); // m = まちがい＋ヒントの数
 const starStr = (s) => `<span class="stars" role="img" aria-label="星${s}つ">${"★".repeat(s)}<span class="off">${"☆".repeat(3 - s)}</span></span>`;
 
@@ -677,6 +689,7 @@ function startRun(mode, opt) {
     // あとから：取りこぼした日（過去7日・まだ遊んでいない）だけ。その日の今日の5問と同じ問題。途中経過は日付ごとに runs["a:日付"]
     if (mode === "a") {
       const ra = s.runs[runKey("a", opt)];
+      if (ra && ra.date === opt && doneOf(ra)) bank(s, ra); // 別のタブで終えたまま記録していない回は、上書きする前に記録する（記録したら、その日はもう遊べない。shared-workflows#409）
       if (!lateDays(s, k).includes(opt)) { ng = true; return; } // 期限は続きからより先に確かめる
       if (ra && ra.date === opt && !doneOf(ra)) return;
       s.runs[runKey("a", opt)] = { mode, date: opt, list: G.dailyTags(opt), res: [], cur: null, id: "a" + opt, a0: achGot(s) };

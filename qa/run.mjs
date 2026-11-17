@@ -57,11 +57,11 @@ const OKSRC = /^https:\/\/www\.bunka\.go\.jp\/seisaku\/bunkashingikai\/kokugo\/h
       if ([P.q, P.media, P.full, ...P.opts].some((x) => typeof x !== "string" || !x || /undefined|NaN|null|\$\{|＠/.test(x))) why.push("中身が空");
       if (!t) { why.push("答えの表に無い種類"); }
       else {
-        const all = [...t[1]], n = all.length <= 3 ? all.length : k.lv === 2 ? 4 : 3, ok = P.ans.slice(1);
+        const ok = P.ans.slice(1), all = [...t[1]].filter((c) => !["著れる"].includes(c + ok)), n = all.length <= 3 ? all.length : k.lv === 2 ? 4 : 3; // その送りがなで語にならない字（著れる）は数えない
         if (P.opts.length !== n || new Set(P.opts).size !== n || !P.opts.includes(P.ans)) why.push(`選び肢が${n}つでない・答えを含まない`);
         if (P.ans[0] !== t[0]) why.push("答えの字が表とちがう");
         if (P.opts.some((o) => !all.includes(o[0]) || o.slice(1) !== ok)) why.push("選び肢が同じ読みの字でない・送りがながそろっていない");
-        if (P.grp.split("_")[0] !== k.set || G.groupsOf(P.grp).length !== all.length) why.push("2段目が同じ読みの字の意味でない");
+        if (P.grp.split("_")[0] !== k.set || G.groupsOf(P.grp).length !== [...t[1]].length) why.push("2段目が同じ読みの字の意味でない");
         if (!k.why.includes(t[0]) || !G.GRP_WHY[P.grp].includes(t[0])) why.push("説明に答えの字が無い");
         if (!/^「[ぁ-ゖ]+」：.*＿＿.*　どの漢字？$/.test(P.q) || P.rev) why.push("問いの言い方がちがう（「よみ」：文＿＿　どの漢字？）");
         if (P.q.includes(t[0])) why.push("問いに答えの字が出ている");
@@ -76,6 +76,13 @@ const OKSRC = /^https:\/\/www\.bunka\.go\.jp\/seisaku\/bunkashingikai\/kokugo\/h
   }
   check(`問題：${G.KINDS.length}種類×${N}問で、選び肢は同じ読みの字（送りがなをそろえる。4つ以上の読みはやさしい・ふつう3・むずかしい4）・答えと2段目が表どおり・どちらも使える用例を出さない・出典がある`, Object.keys(bad).length === 0, JSON.stringify(bad));
   const total = Object.values(seen).reduce((a, s) => a + s.size, 0), few = G.KINDS.filter((k) => seen[k.id].size < Math.min(2, k.sents.length)).map((k) => `${k.id}:${seen[k.id].size}`);
+  // 問いの読みは答えの語の読み：なかまの訓（こえる）と形がちがう語（越す）は、文に読み（こす）を書く。活用（会い・熱くて・診て など）は下の表だけ。
+  // その送りがなで語にならない字（著れる）を選び肢に出さない（kanji-tsukaiwake #1 の CodeRabbit）
+  const INFL = new Set(["会い", "熱くて", "早く", "診て", "指して", "指し", "刺される"]), NGW = /著れる/;
+  const yb = [], ngw = [];
+  for (const k of G.KINDS) for (const st of k.sents) { const m = /\[(.)([^\]|]*)(?:\|([^\]|-][^\]|]*))?/.exec(st), y = m[3] || k.yomi; if (!y.endsWith(m[2]) && !INFL.has(m[1] + m[2])) yb.push(`${k.id}:${st}`); }
+  for (const k of G.KINDS) for (let s = 0; s < 300; s++) { const P = G.make(`${k.id}|ng${s}`); if (P.opts.some((o) => NGW.test(o))) { ngw.push(`${k.id}:${P.opts.join("/")}`); break; } }
+  check("問いの読みが答えの語と合う（越す→「こす」・表れる→「あらわれる」）・語にならない選び肢（著れる）を出さない", !yb.length && !ngw.length, yb.concat(ngw).slice(0, 5).join(","));
   check("問題の数：全部で300通り以上・文が2つ以上ある種類は2通り以上（好きなだけ遊んでも同じ問題が続かない。game-dev.md F6）", total >= 300 && few.length === 0, `${total}通り ${few.join(",")}`);
   check("問題：種類は63（やさしい12・ふつう24・むずかしい27）", G.KINDS.length === 63 && [0, 1, 2].map((l) => G.kindsOf(l).length).join() === "12,24,27");
   check("答えの表と data.js の種類が同じ", Object.keys(TB).sort().join() === G.KINDS.map((k) => k.id).sort().join());
@@ -272,6 +279,9 @@ try {
     // とことんの並びを何百回作って、1回の中で同じ問題が無い・続けて同じ種類が無い・足しても重ならない
     const r = await p.evaluate(() => { const K = __nm.G, bad = []; for (let n = 0; n < 300; n++) { const l = __nm.endlessList(), more = l.concat(__nm.moreList(l)); const ks = more.map((t) => K.keyOf(K.make(t))); if (new Set(ks).size !== ks.length) bad.push("重なり"); if (more.some((t, i) => i && t.split("|")[0] === more[i - 1].split("|")[0])) bad.push("同じ種類が続く"); if (l.length !== 60 || more.length !== 100) bad.push("数" + l.length + "/" + more.length); } return bad; });
     check("とことんの並び300回：60問＋足した40問で同じ問題も同じ種類の連続も無い（game-dev.md F6）", r.length === 0, r.slice(0, 3).join(","));
+    // 全部の問題を使い切っても、次の周に入って40問ずつ足し続ける（近ごろの30問とは重ねない。shared-workflows#409）
+    const r2 = await p.evaluate(() => { const K = __nm.G, bad = []; let l = __nm.endlessList(); for (let n = 0; n < 40; n++) { const m = __nm.moreList(l); if (m.length !== 40) { bad.push(`${n}回目 ${m.length}問`); break; } l = l.concat(m); } const ks = l.map((t) => K.keyOf(K.make(t))); for (let i = 0; i < ks.length; i++) if (ks.slice(Math.max(0, i - 30), i).includes(ks[i])) { bad.push(`${i}問目が30問以内に重なる`); break; } return bad; });
+    check("とことんは全部の問題を使い切っても40問ずつ足し続け、近ごろの30問とは重ねない（自分で降りるまで終わらない）", r2.length === 0, r2.join(","));
   }
   {
     // 引き継ぎコードなどで数の所に文字が入っても、画面に HTML として出さない（2026-11-05 CodeRabbit）
@@ -333,6 +343,11 @@ try {
     const exp = [1, 4, 5, 6, 7].map(dayBefore).filter((d) => d >= "2026-11-07");
     check("カレンダー：取りこぼした過去7日（第1回より後）を押せる", JSON.stringify(lateList) === JSON.stringify(exp), lateList.join(","));
     check("カレンダー：遊んだ日は★の数の文字も付く", (await q.locator(".cal .c.p3").count()) + (await q.locator(".cal .c.p2").count()) + (await q.locator(".cal .c.p1").count()) >= (dayBefore(3).slice(0, 7) === TODAY.slice(0, 7) ? 2 : 0));
+    if (lateList.length > 1) {
+      // 別のタブで終えたまま記録していない「あとから」の回は、もう一度押しても消さずに記録する（shared-workflows#409）
+      const d = lateList[1], kept = await q.evaluate((d) => { __nm.save((s) => { s.runs["a:" + d] = { mode: "a", date: d, list: __nm.G.dailyTags(d), res: [0, 1, 2, 3, 4].map(() => ({ m: 0 })), cur: null, id: "a" + d }; }); __nm.start("a", d); const s = __nm.load(), ok = !!s.adays[d] && s.runs["a:" + d] && s.runs["a:" + d].res.length === 5; __nm.save((s2) => { delete s2.adays[d]; s2.runs["a:" + d] = null; }); __nm.cal(); return ok; }, d);
+      check("あとから：別のタブで終えたまま記録していない回は、もう一度押しても消さずに記録する", kept === true);
+    }
     if (lateList.length) {
       const d = lateList[0];
       await q.evaluate((d) => { const b = document.querySelector(`.cal .miss[data-k="${d}"]`); if (b) b.click(); else { const m = document.querySelector(".calnav #prev"); m && m.click(); } }, d);
